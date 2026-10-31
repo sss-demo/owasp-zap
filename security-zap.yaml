@@ -1,0 +1,74 @@
+
+name: OWASP ZAP Automated Security Scan
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zap-security-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # Step 1: Checkout repository
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Step 2: Start OWASP Juice Shop test website
+      - name: Start Test Website
+        run: |
+          docker run -d \
+            --name juice-shop \
+            -p 127.0.0.1:3000:3000 \
+            bkimminich/juice-shop
+
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:3000/ > /dev/null; then
+              echo "Juice Shop is running!"
+              break
+            fi
+            sleep 2
+          done
+
+          curl -f http://127.0.0.1:3000/
+
+      # Step 3: Run OWASP ZAP scan
+      - name: OWASP ZAP Baseline Scan
+        run: |
+          docker run --rm \
+            --network host \
+            -v "$PWD:/zap/wrk/:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py \
+            -t http://127.0.0.1:3000 \
+            -r zap-report.html \
+            -J zap-report.json \
+            -I
+
+      # Step 4: Upload scan reports
+      - name: Upload ZAP Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OWASP-ZAP-Reports
+          path: |
+            zap-report.html
+            zap-report.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      # Step 5: Stop test website
+      - name: Stop Test Website
+        if: always()
+        run: docker rm -f juice-shop || true
